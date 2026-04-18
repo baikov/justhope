@@ -535,7 +535,7 @@ class ServerSetup:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Base server hardening')
-    parser.add_argument('--user', required=True, help='Имя нового пользователя')
+    parser.add_argument('--user', default='user', help='Имя нового пользователя')
     parser.add_argument(
         '--ssh-key',
         help='Публичный SSH-ключ одной строкой (опционально). Если не задан, берём ключи из /root/.ssh/authorized_keys',

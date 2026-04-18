@@ -2,13 +2,17 @@
 
 Утилита для базового hardening сервера Ubuntu/Debian (создание пользователя, SSH, UFW, fail2ban).
 
-## Установка и запуск одной командой
+## Предварительные шаги
 
 ```
 apt update && apt upgrade -y && apt install -y git ca-certificates && \
 wget -qO- https://astral.sh/uv/install.sh | sh && \
 source $HOME/.local/bin/env && \
 source $HOME/.bashrc
+```
+
+```
+ssh-copy-id -p 22 root@your-server-ip
 ```
 
 Первый запуск предполагается **из-под root** (на чистом сервере `sudo` может ещё не быть настроен).
