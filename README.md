@@ -34,7 +34,7 @@ uvx --from "git+https://github.com/baikov/justhope.git" justhope setup \
 ```bash
 python3 -m pip install "git+https://github.com/baikov/justhope.git"
 # затем:
-justhope setup --user deploy --ssh-key ~/.ssh/id_ed25519.pub --ssh-port 2222
+justhope setup --user deploy --ssh-key "ssh-ed25519 AAAA... comment" --ssh-port 2222
 ```
 
 ## Примечания
@@ -44,3 +44,5 @@ justhope setup --user deploy --ssh-key ~/.ssh/id_ed25519.pub --ssh-port 2222
 - Новый пользователь создаётся в процессе и (опционально) получает sudo-доступ — поэтому первый запуск делайте под root.
 - Если `--ssh-key` не задан, ключи копируются из `/root/.ssh/authorized_keys` в `~user/.ssh/authorized_keys`.
 - Если `--ssh-key` задан, он должен быть одной строкой публичного ключа (например `ssh-ed25519 AAAA... comment`), и root-ключи не копируются.
+- По умолчанию скрипт в начале делает `apt update` и `apt upgrade -y`, создаёт swapfile и настраивает окружение пользователя (zsh + oh-my-zsh).
+- Если что-то из этого не нужно, смотри `justhope setup --help` (флаги `--no-upgrade`, `--no-swap`, `--no-zsh`, `--no-ohmyzsh`, `--no-base-packages`).

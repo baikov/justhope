@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import pwd
+import re
 import shlex
 import shutil
 import subprocess
@@ -23,6 +24,13 @@ class ServerSetup:
         ssh_port: int = 22,
         sudo: bool = True,
         extra_ports: list[int] | None = None,
+        do_upgrade: bool = True,
+        setup_swap: bool = True,
+        swap_multiplier: int = 2,
+        swap_size_gb: int | None = None,
+        install_base_packages: bool = True,
+        setup_zsh: bool = True,
+        setup_ohmyzsh: bool = True,
     ):
         self.username = username
         self.ssh_key = ssh_key
@@ -31,6 +39,188 @@ class ServerSetup:
         self.extra_ports = extra_ports or []
         self.home = Path(f'/home/{username}')
         self._ssh_access_ready: bool | None = None
+
+        self.do_upgrade = do_upgrade
+        self.setup_swap = setup_swap
+        self.swap_multiplier = swap_multiplier
+        self.swap_size_gb = swap_size_gb
+        self.install_base_packages = install_base_packages
+        self.setup_zsh_enabled = setup_zsh
+        self.setup_ohmyzsh_enabled = setup_ohmyzsh
+
+    def _run_as_user(self, command: str, check: bool = True) -> subprocess.CompletedProcess:
+        return self._run(['runuser', '-l', self.username, '-c', command], check=check)
+
+    def _apt(self, args: Sequence[str], check: bool = True) -> subprocess.CompletedProcess:
+        # apt/apt-get могут спрашивать вопросы на upgrade — просим noninteractive.
+        return self._run(['env', 'DEBIAN_FRONTEND=noninteractive', *args], check=check)
+
+    def apt_update(self) -> None:
+        log.info('📦 apt update...')
+        self._apt(['apt', 'update'])
+
+    def apt_upgrade(self) -> None:
+        log.info('📦 apt upgrade -y...')
+        self._apt(['apt', 'upgrade', '-y'])
+
+    def _mem_total_kb(self) -> int:
+        meminfo = Path('/proc/meminfo').read_text(encoding='utf-8', errors='replace')
+        m = re.search(r'^MemTotal:\s+(\d+)\s+kB\s*$', meminfo, flags=re.MULTILINE)
+        if not m:
+            msg = 'Не смог прочитать MemTotal из /proc/meminfo'
+            raise RuntimeError(msg)
+        return int(m.group(1))
+
+    def setup_swapfile(self) -> None:
+        if not self.setup_swap:
+            return
+
+        swapfile = Path('/swapfile')
+
+        swaps = self._run(['swapon', '--show', '--noheadings'], check=False)
+        if (swaps.stdout or '').strip() and not swapfile.exists():
+            log.info('✓ Swap уже настроен (есть активные swap-устройства). Пропускаю создание swapfile.')
+            return
+
+        if swapfile.exists():
+            # Если файл существует, попробуем убедиться, что он активен и есть в fstab.
+            active = '/swapfile' in (swaps.stdout or '')
+            if not active:
+                self._run(['chmod', '600', str(swapfile)])
+                self._run(['mkswap', str(swapfile)], check=False)
+                self._run(['swapon', str(swapfile)], check=False)
+        else:
+            if self.swap_size_gb is not None:
+                size_bytes = int(self.swap_size_gb) * 1024 * 1024 * 1024
+            else:
+                size_bytes = self._mem_total_kb() * 1024 * max(1, int(self.swap_multiplier))
+
+            size_mb = max(128, (size_bytes + (1024 * 1024 - 1)) // (1024 * 1024))
+            log.info(f'💾 Создаю swapfile /swapfile размером ~{size_mb} MiB')
+
+            fallocate = shutil.which('fallocate')
+            if fallocate:
+                self._run([fallocate, '-l', f'{size_mb}M', str(swapfile)])
+            else:
+                self._run(['dd', 'if=/dev/zero', f'of={swapfile}', 'bs=1M', f'count={size_mb}'])
+
+            self._run(['chmod', '600', str(swapfile)])
+            self._run(['mkswap', str(swapfile)])
+            self._run(['swapon', str(swapfile)])
+
+        fstab = Path('/etc/fstab')
+        entry = '/swapfile none swap sw 0 0'
+        fstab_text = fstab.read_text(encoding='utf-8', errors='replace') if fstab.exists() else ''
+        if entry not in fstab_text:
+            with fstab.open('a', encoding='utf-8') as f:
+                if fstab_text and not fstab_text.endswith('\n'):
+                    f.write('\n')
+                f.write(entry + '\n')
+        log.info('✓ Swap настроен')
+
+    def install_packages(self, packages: Sequence[str]) -> None:
+        if not packages:
+            return
+        self._apt(['apt', 'install', '-y', *packages])
+
+    def setup_base_packages(self) -> None:
+        if not self.install_base_packages:
+            return
+        log.info('🧰 Устанавливаю базовые пакеты...')
+        packages = [
+            'neovim',
+            'tmux',
+            'htop',
+            'git',
+            'curl',
+            'wget',
+            'zip',
+            'unzip',
+            'build-essential',
+            'ca-certificates',
+            'gnupg',
+            'lsb-release',
+        ]
+        self.install_packages(packages)
+        log.info('✓ Базовые пакеты установлены')
+
+    def setup_zsh(self) -> None:
+        if not self.setup_zsh_enabled:
+            return
+        log.info('🐚 Устанавливаю zsh и ставлю shell по умолчанию...')
+
+        self.install_packages(['zsh'])
+        zsh_path = shutil.which('zsh') or '/usr/bin/zsh'
+
+        try:
+            current_shell = pwd.getpwnam(self.username).pw_shell
+        except KeyError:
+            current_shell = ''
+
+        if current_shell != zsh_path:
+            self._run(['chsh', '-s', zsh_path, self.username])
+
+        log.info('✓ zsh настроен')
+
+    def setup_oh_my_zsh(self) -> None:
+        if not self.setup_ohmyzsh_enabled:
+            return
+        log.info('✨ Устанавливаю oh-my-zsh и плагины...')
+
+        # Требуется git + curl
+        self.install_packages(['git', 'curl'])
+
+        ohmyzsh_dir = self.home / '.oh-my-zsh'
+        if not ohmyzsh_dir.exists():
+            install_cmd = (
+                'RUNZSH=no CHSH=no KEEP_ZSHRC=yes '
+                'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
+            )
+            self._run_as_user(install_cmd)
+
+        plugins_dir = ohmyzsh_dir / 'custom' / 'plugins'
+        autosug = plugins_dir / 'zsh-autosuggestions'
+        syntaxhl = plugins_dir / 'zsh-syntax-highlighting'
+
+        if not autosug.exists():
+            self._run_as_user(
+                'mkdir -p ~/.oh-my-zsh/custom/plugins && '
+                'git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions '
+                '~/.oh-my-zsh/custom/plugins/zsh-autosuggestions'
+            )
+
+        if not syntaxhl.exists():
+            self._run_as_user(
+                'mkdir -p ~/.oh-my-zsh/custom/plugins && '
+                'git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting '
+                '~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting'
+            )
+
+        zshrc = self.home / '.zshrc'
+        if zshrc.exists():
+            text = zshrc.read_text(encoding='utf-8', errors='replace')
+        else:
+            text = ''
+
+        desired_plugins = ['git', 'zsh-autosuggestions', 'zsh-syntax-highlighting']
+
+        m = re.search(r'^plugins=\(([^)]*)\)\s*$', text, flags=re.MULTILINE)
+        if m:
+            current = [p for p in m.group(1).split() if p.strip()]
+            merged: list[str] = []
+            for p in current + desired_plugins:
+                if p not in merged:
+                    merged.append(p)
+            new_line = 'plugins=(' + ' '.join(merged) + ')'
+            text = re.sub(r'^plugins=\(([^)]*)\)\s*$', new_line, text, flags=re.MULTILINE)
+        else:
+            if text and not text.endswith('\n'):
+                text += '\n'
+            text += 'plugins=(' + ' '.join(desired_plugins) + ')\n'
+
+        zshrc.write_text(text, encoding='utf-8')
+        self._run(['chown', f'{self.username}:{self.username}', str(zshrc)])
+        log.info('✓ oh-my-zsh настроен')
 
     def _read_authorized_keys_lines(self, path: Path) -> list[str]:
         if not path.exists():
@@ -277,16 +467,25 @@ class ServerSetup:
     def run(self) -> None:
         log.info(f'🚀 Начинаю базовую настройку сервера для {self.username}')
 
+        # Сначала — обновление системы и базовые вещи.
+        self.apt_update()
+        if self.do_upgrade:
+            self.apt_upgrade()
+
+        self.setup_swapfile()
+        self.setup_base_packages()
+
         self.create_user()
         self.ensure_ssh_access()
         self.setup_sudo()
+
+        # Шаги, которые обычно делают уже под новым пользователем.
+        self.setup_zsh()
+        self.setup_oh_my_zsh()
+
         self.setup_ssh()
         self.setup_ufw(allow_ports=[self.ssh_port, *self.extra_ports])
         self.setup_fail2ban()
-
-        log.info('📦 Обновляю пакеты...')
-        self._run(['apt', 'update'])
-        self._run(['apt', 'upgrade', '-y'])
 
         log.info('✅ Готово! Проверь подключение под новым юзером:')
         log.info(f'   ssh -p {self.ssh_port} {self.username}@<server_ip>')
@@ -303,15 +502,34 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--ssh-port', type=int, default=2222, help='Порт SSH (по умолчанию 2222)')
     parser.add_argument('--no-sudo', action='store_true', help='Не добавлять в sudo')
     parser.add_argument('--extra-ports', nargs='+', type=int, default=[], help='Доп. порты для UFW (например, 80 443)')
+
+    parser.add_argument(
+        '--no-upgrade',
+        action='store_true',
+        help='Не выполнять apt upgrade (apt update всё равно будет)',
+    )
+
+    parser.add_argument('--no-swap', action='store_true', help='Не создавать swapfile')
+    parser.add_argument('--swap-multiplier', type=int, default=2, help='Swap = RAM * multiplier (по умолчанию 2)')
+    parser.add_argument('--swap-size-gb', type=int, help='Явный размер swap в GiB (перебивает multiplier)')
+
+    parser.add_argument('--no-base-packages', action='store_true', help='Не ставить базовые пакеты (neovim, tmux, ...)')
+    parser.add_argument('--no-zsh', action='store_true', help='Не ставить zsh и не менять shell')
+    parser.add_argument('--no-ohmyzsh', action='store_true', help='Не ставить oh-my-zsh и плагины')
+
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    try:
+        args = parse_args(argv)
+    except SystemExit as e:
+        # argparse использует SystemExit для --help и ошибок парсинга.
+        return int(e.code or 0)
+
     if os.geteuid() != 0:
         log.error('❌ Запускай от root, дружище. justhope setup --user <name> ...')
         return 1
-
-    args = parse_args(argv)
 
     setup = ServerSetup(
         username=args.user,
@@ -319,6 +537,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         ssh_port=args.ssh_port,
         sudo=not args.no_sudo,
         extra_ports=args.extra_ports,
+        do_upgrade=not args.no_upgrade,
+        setup_swap=not args.no_swap,
+        swap_multiplier=args.swap_multiplier,
+        swap_size_gb=args.swap_size_gb,
+        install_base_packages=not args.no_base_packages,
+        setup_zsh=not args.no_zsh,
+        setup_ohmyzsh=not args.no_ohmyzsh,
     )
 
     try:
