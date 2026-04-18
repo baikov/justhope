@@ -1,6 +1,6 @@
 """CLI entrypoint.
 
-Сейчас реализована одна команда: setup (алиас: base-setup).
+Сейчас реализованы команды: setup, update.
 В будущем сюда удобно добавлять подкоманды (туннели, сервисы и т.п.).
 """
 
@@ -22,15 +22,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             'justhope\n\n'
             'Команды:\n'
             '  setup       Базовый hardening сервера (Ubuntu/Debian)\n'
-            '  base-setup  Алиас для setup\n\n'
             '  update      Обновить justhope из GitHub в текущем окружении\n\n'
+            'Параметры setup: justhope setup --help\n'
+            'Коротко по флагам:\n'
+            '  --user - имя пользователя для создания (по умолчанию: user)\n'
+            '  --ssh-key - ключ для SSH одной строкой\n'
+            '  --ssh-port - порт для SSH (по умолчанию: 22)\n'
+            '  --extra-ports - дополнительные порты для открытия в UFW\n'
+            '  --no-upgrade - не выполнять обновление системы\n'
+            '  --no-swap - не пытаться создать swap файл\n'
+            '  --no-zsh - не устанавливать zsh\n'
+            '  --no-ohmyzsh - не устанавливать oh-my-zsh\n'
+            '  --no-base-packages - не устанавливать базовые пакеты\n\n'
             'Пример:\n'
-            '  justhope setup --user deploy --ssh-port 2222 --extra-ports 80 443\n'
+            '  justhope setup --user user --ssh-port 2222 --extra-ports 80 443\n'
         )
         return 0
 
     cmd, *rest = args
-    if cmd in {'setup', 'base-setup'}:
+    if cmd == 'setup':
         return server_setup.main(rest)
 
     if cmd == 'update':

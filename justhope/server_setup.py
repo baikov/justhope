@@ -534,8 +534,12 @@ class ServerSetup:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Base server hardening')
-    parser.add_argument('--user', default='user', help='Имя нового пользователя')
+    return build_parser().parse_args(argv)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog='justhope setup', description='Base server hardening (Ubuntu/Debian)')
+    parser.add_argument('--user', default='user', help='Имя нового пользователя (по умолчанию: user)')
     parser.add_argument(
         '--ssh-key',
         help='Публичный SSH-ключ одной строкой (опционально). Если не задан, берём ключи из /root/.ssh/authorized_keys',
@@ -558,7 +562,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--no-zsh', action='store_true', help='Не ставить zsh и не менять shell')
     parser.add_argument('--no-ohmyzsh', action='store_true', help='Не ставить oh-my-zsh и плагины')
 
-    return parser.parse_args(argv)
+    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
