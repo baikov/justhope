@@ -334,6 +334,16 @@ class ServerSetup:
         if not self.sudo:
             return
         log.info('🔐 Настраиваю sudo...')
+
+        visudo_bin = shutil.which('visudo')
+        if visudo_bin is None:
+            log.info('ℹ️  visudo не найден — устанавливаю пакет sudo...')
+            self.install_packages(['sudo'])
+            visudo_bin = shutil.which('visudo')
+            if visudo_bin is None:
+                msg = 'Не найден visudo даже после установки sudo'
+                raise RuntimeError(msg)
+
         sudoers_entry = f'{self.username} ALL=(ALL) NOPASSWD:ALL'
         sudoers_file = Path(f'/etc/sudoers.d/{self.username}')
 
@@ -348,7 +358,7 @@ class ServerSetup:
                 f.write(f'{sudoers_entry}\n')
             tmp.chmod(0o440)
             self._run(['chown', 'root:root', str(tmp)])
-            self._run(['visudo', '-c', '-f', str(tmp)])
+            self._run([visudo_bin, '-c', '-f', str(tmp)])
             shutil.move(str(tmp), str(sudoers_file))
         finally:
             if tmp.exists():
@@ -476,7 +486,16 @@ class ServerSetup:
         self.setup_base_packages()
 
         self.create_user()
-        self.ensure_ssh_access()
+
+        if not self.ensure_ssh_access():
+            log.error(
+                '❌ Не найден SSH-ключ для нового пользователя. '
+                'Укажи `--ssh-key "ssh-ed25519 AAAA..."` или добавь ключ в /root/.ssh/authorized_keys, '
+                'после чего запусти команду ещё раз. '
+                'Останавливаюсь до изменений SSH/UFW, чтобы не отрезать доступ.'
+            )
+            return
+
         self.setup_sudo()
 
         # Шаги, которые обычно делают уже под новым пользователем.
