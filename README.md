@@ -10,7 +10,7 @@
 
 ```bash
 python3 -m pip install -U pipx
-pipx run --spec "git+https://github.com/<owner>/<repo>.git" justhope setup \
+pipx run --spec "git+https://github.com/baikov/justhope.git" justhope setup \
   --user deploy \
   --ssh-port 2222 \
   --extra-ports 80 443
@@ -19,7 +19,7 @@ pipx run --spec "git+https://github.com/<owner>/<repo>.git" justhope setup \
 Вариант 2 — если на сервере есть `uv`, можно сделать то же самое через `uvx`:
 
 ```bash
-uvx --from "git+https://github.com/<owner>/<repo>.git" justhope setup \
+uvx --from "git+https://github.com/baikov/justhope.git" justhope setup \
   --user deploy \
   --ssh-port 2222 \
   --extra-ports 80 443
@@ -32,7 +32,7 @@ uvx --from "git+https://github.com/<owner>/<repo>.git" justhope setup \
 Если хотите, чтобы команда была установлена на сервере:
 
 ```bash
-python3 -m pip install "git+https://github.com/<owner>/<repo>.git"
+python3 -m pip install "git+https://github.com/baikov/justhope.git"
 # затем:
 justhope setup --user deploy --ssh-key ~/.ssh/id_ed25519.pub --ssh-port 2222
 ```
