@@ -55,6 +55,11 @@ class ServerSetup:
         # apt/apt-get могут спрашивать вопросы на upgrade — просим noninteractive.
         return self._run(['env', 'DEBIAN_FRONTEND=noninteractive', *args], check=check)
 
+    def _is_package_installed(self, package: str) -> bool:
+        # dpkg-query возвращает 0 и строку вида: "install ok installed" если пакет установлен.
+        res = self._run(['dpkg-query', '-W', '-f=${Status}', package], check=False)
+        return res.returncode == 0 and 'install ok installed' in (res.stdout or '')
+
     def apt_update(self) -> None:
         log.info('📦 apt update...')
         self._apt(['apt', 'update'])
@@ -121,7 +126,26 @@ class ServerSetup:
     def install_packages(self, packages: Sequence[str]) -> None:
         if not packages:
             return
-        self._apt(['apt', 'install', '-y', *packages])
+        for package in packages:
+            if self._is_package_installed(package):
+                log.info(f'✓ Пакет уже установлен: {package}')
+                continue
+            log.info(f'📦 Ставим пакет: {package}...')
+            self._apt(['apt', 'install', '-y', package])
+            log.info(f'✓ Установлен успешно: {package}')
+
+    def _ensure_visudo(self) -> str:
+        visudo_bin = shutil.which('visudo')
+        if visudo_bin is not None:
+            return visudo_bin
+
+        log.info('ℹ️  visudo не найден — устанавливаю пакет sudo...')
+        self.install_packages(['sudo'])
+        visudo_bin = shutil.which('visudo')
+        if visudo_bin is None:
+            msg = 'Не найден visudo даже после установки sudo'
+            raise RuntimeError(msg)
+        return visudo_bin
 
     def setup_base_packages(self) -> None:
         if not self.install_base_packages:
@@ -335,14 +359,7 @@ class ServerSetup:
             return
         log.info('🔐 Настраиваю sudo...')
 
-        visudo_bin = shutil.which('visudo')
-        if visudo_bin is None:
-            log.info('ℹ️  visudo не найден — устанавливаю пакет sudo...')
-            self.install_packages(['sudo'])
-            visudo_bin = shutil.which('visudo')
-            if visudo_bin is None:
-                msg = 'Не найден visudo даже после установки sudo'
-                raise RuntimeError(msg)
+        visudo_bin = self._ensure_visudo()
 
         sudoers_entry = f'{self.username} ALL=(ALL) NOPASSWD:ALL'
         sudoers_file = Path(f'/etc/sudoers.d/{self.username}')
@@ -358,7 +375,12 @@ class ServerSetup:
                 f.write(f'{sudoers_entry}\n')
             tmp.chmod(0o440)
             self._run(['chown', 'root:root', str(tmp)])
-            self._run([visudo_bin, '-c', '-f', str(tmp)])
+            try:
+                self._run([visudo_bin, '-c', '-f', str(tmp)])
+            except FileNotFoundError:
+                # На некоторых минимальных образах sudo/visudo может отсутствовать — попробуем поставить и повторить.
+                visudo_bin = self._ensure_visudo()
+                self._run([visudo_bin, '-c', '-f', str(tmp)])
             shutil.move(str(tmp), str(sudoers_file))
         finally:
             if tmp.exists():
@@ -518,7 +540,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         '--ssh-key',
         help='Публичный SSH-ключ одной строкой (опционально). Если не задан, берём ключи из /root/.ssh/authorized_keys',
     )
-    parser.add_argument('--ssh-port', type=int, default=2222, help='Порт SSH (по умолчанию 2222)')
+    parser.add_argument('--ssh-port', type=int, default=22, help='Порт SSH (по умолчанию 22)')
     parser.add_argument('--no-sudo', action='store_true', help='Не добавлять в sudo')
     parser.add_argument('--extra-ports', nargs='+', type=int, default=[], help='Доп. порты для UFW (например, 80 443)')
 

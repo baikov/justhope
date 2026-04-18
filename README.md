@@ -4,39 +4,36 @@
 
 ## Установка и запуск одной командой
 
+```
+apt update && apt upgrade -y && apt install -y git ca-certificates && \
+wget -qO- https://astral.sh/uv/install.sh | sh && \
+source $HOME/.local/bin/env && \
+source $HOME/.bashrc
+```
+
 Первый запуск предполагается **из-под root** (на чистом сервере `sudo` может ещё не быть настроен).
-
-На Debian 12/13 `pip` обычно не даёт ставить пакеты “в систему” (PEP 668: `externally-managed-environment`).
-Поэтому для запуска/установки приложения лучше использовать `pipx`/`uvx` или отдельный `venv`.
-
-Вариант 1 — запустить прямо из GitHub через `pipx` (ничего не “засоряет” системный Python):
-
-```bash
-apt update
-apt install -y pipx git ca-certificates
-
-pipx run --spec "git+https://github.com/baikov/justhope.git" justhope setup \
-  --user test \
-  --ssh-key "ssh-ed25519 AAAA... comment" \
-  --ssh-port 2222 \
-  --extra-ports 80 443
-```
-
-Вариант 2 — если на сервере есть `uv`, можно сделать то же самое через `uvx`:
-
-```bash
-uvx --from "git+https://github.com/baikov/justhope.git" justhope setup \
-  --user test \
-  --ssh-key "ssh-ed25519 AAAA... comment" \
-  --ssh-port 2222 \
-  --extra-ports 80 443
-```
-
-Замените `<owner>/<repo>` на ваш репозиторий.
 
 ## Установка как команды `justhope`
 
 Если хотите, чтобы команда была установлена на сервере:
+
+### Вариант A — через `uv tool` (рекомендуется, если используешь `uv`)
+
+```bash
+uv tool install --from "git+https://github.com/baikov/justhope.git" justhope
+
+# затем:
+justhope --help
+justhope setup --user test --ssh-port 2222
+```
+
+Обновление:
+
+```bash
+uv tool update justhope
+```
+
+### Вариант B — через `venv`
 
 ```bash
 apt update
@@ -51,6 +48,24 @@ ln -sf /opt/justhope-venv/bin/justhope /usr/local/bin/justhope
 # затем:
 justhope setup --user deploy --ssh-key "ssh-ed25519 AAAA... comment" --ssh-port 2222
 ```
+
+## Обновление
+
+Если `justhope` установлен в `venv` (например, как в примере выше через `/opt/justhope-venv`), можно подтянуть свежие изменения из GitHub командой:
+
+```bash
+justhope update
+```
+
+По умолчанию команда попробует использовать `uv` (если он установлен), иначе обновит через `pip` в текущем окружении.
+
+Если `justhope` установлен через `uv tool`, обновляй так:
+
+```bash
+uv tool update justhope
+```
+
+Если запускаешь через `pipx run`, отдельное обновление не нужно — просто запусти команду ещё раз (при необходимости добавь `--pip-args="--no-cache-dir"`).
 
 ## Примечания
 
